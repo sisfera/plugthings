@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Brock Allen & Dominick Baier. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See LICENSE in the project root for license information.
 
-
+using System.Reflection;
 using MainServer.IS4Host.Data;
 using MainServer.IS4Host.Models;
 using Microsoft.AspNetCore.Builder;
@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using System;
+using IdentityServer4.EntityFramework.DbContexts;
 
 namespace MainServer.IS4Host
 {
@@ -27,8 +28,14 @@ namespace MainServer.IS4Host
 
         public void ConfigureServices(IServiceCollection services)
         {
+            // Store connection string as a var
+            var connectionString = Configuration.GetConnectionString("DefaultConnection");
+
+            // Store assembly for migrations
+            var migrationsAssembly = typeof(Startup).GetTypeInfo().Assembly.GetName().Name;
+            // Replace DbContext database from SqLite in template to PostgreSQL 
             services.AddDbContext<ApplicationDbContext>(options =>
-                options.UseSqlite(Configuration.GetConnectionString("DefaultConnection")));
+                options.UseNpgsql(connectionString));
 
             services.AddIdentity<ApplicationUser, IdentityRole>()
                 .AddEntityFrameworkStores<ApplicationDbContext>()
@@ -42,16 +49,20 @@ namespace MainServer.IS4Host
                 iis.AutomaticAuthentication = false;
             });
 
-            var builder = services.AddIdentityServer(options =>
-            {
-                options.Events.RaiseErrorEvents = true;
-                options.Events.RaiseInformationEvents = true;
-                options.Events.RaiseFailureEvents = true;
-                options.Events.RaiseSuccessEvents = true;
-            })
-                .AddInMemoryIdentityResources(Config.GetIdentityResources())
-                .AddInMemoryApiResources(Config.GetApis())
-                .AddInMemoryClients(Config.GetClients())
+            var builder = services.AddIdentityServer()
+
+                // Use our Postgres Database for storing configuration data
+                .AddConfigurationStore(configDb =>
+                {
+                    configDb.ConfigureDbContext = db => db.UseNpgsql(connectionString,
+                    sql => sql.MigrationsAssembly(migrationsAssembly));
+                })
+                // Use our Postgres Database for storing operational data
+                .AddOperationalStore(operationalDb =>
+                {
+                    operationalDb.ConfigureDbContext = db => db.UseNpgsql(connectionString,
+                    sql => sql.MigrationsAssembly(migrationsAssembly));
+                })
                 .AddAspNetIdentity<ApplicationUser>();
 
             if (Environment.IsDevelopment())
@@ -86,6 +97,17 @@ namespace MainServer.IS4Host
             app.UseStaticFiles();
             app.UseIdentityServer();
             app.UseMvcWithDefaultRoute();
+        }
+
+        private void InitializeDatabase(IApplicationBuilder app)
+        {
+            using (var serviceScope = app.ApplicationServices.GetService<IServiceScopeFactory>().CreateScope())
+            {
+                serviceScope.ServiceProvider.GetRequiredService<PersistedGrantDbContext>().Database.Migrate();
+
+                var context = serviceScope.ServiceProvider.GetRequiredService<ConfigurationDbContext>();
+                context.Database.Migrate();
+            }
         }
     }
 }
