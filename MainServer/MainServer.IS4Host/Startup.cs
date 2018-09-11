@@ -12,102 +12,143 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using IdentityServer4.EntityFramework.DbContexts;
+using System.Linq;
+using IdentityServer4.EntityFramework.Mappers;
 
 namespace MainServer.IS4Host
 {
-    public class Startup
+  public class Startup
+  {
+    public IConfiguration Configuration { get; }
+    public IHostingEnvironment Environment { get; }
+
+    public Startup(IConfiguration configuration, IHostingEnvironment environment)
     {
-        public IConfiguration Configuration { get; }
-        public IHostingEnvironment Environment { get; }
-
-        public Startup(IConfiguration configuration, IHostingEnvironment environment)
-        {
-            Configuration = configuration;
-            Environment = environment;
-        }
-
-        public void ConfigureServices(IServiceCollection services)
-        {
-            // Store connection string as a var
-            var connectionString = Configuration.GetConnectionString("DefaultConnection");
-
-            // Store assembly for migrations
-            var migrationsAssembly = typeof(Startup).GetTypeInfo().Assembly.GetName().Name;
-            // Replace DbContext database from SqLite in template to PostgreSQL 
-            services.AddDbContext<ApplicationDbContext>(options =>
-                options.UseNpgsql(connectionString));
-
-            services.AddIdentity<ApplicationUser, IdentityRole>()
-                .AddEntityFrameworkStores<ApplicationDbContext>()
-                .AddDefaultTokenProviders();
-
-            services.AddMvc();
-
-            services.Configure<IISOptions>(iis =>
-            {
-                iis.AuthenticationDisplayName = "Windows";
-                iis.AutomaticAuthentication = false;
-            });
-
-            var builder = services.AddIdentityServer()
-
-                // Use our Postgres Database for storing configuration data
-                .AddConfigurationStore(configDb =>
-                {
-                    configDb.ConfigureDbContext = db => db.UseNpgsql(connectionString,
-                    sql => sql.MigrationsAssembly(migrationsAssembly));
-                })
-                // Use our Postgres Database for storing operational data
-                .AddOperationalStore(operationalDb =>
-                {
-                    operationalDb.ConfigureDbContext = db => db.UseNpgsql(connectionString,
-                    sql => sql.MigrationsAssembly(migrationsAssembly));
-                })
-                .AddAspNetIdentity<ApplicationUser>();
-
-            if (Environment.IsDevelopment())
-            {
-                builder.AddDeveloperSigningCredential();
-            }
-            else
-            {
-                throw new Exception("need to configure key material");
-            }
-
-            services.AddAuthentication()
-                .AddGoogle(options =>
-                {
-                    options.ClientId = "708996912208-9m4dkjb5hscn7cjrn5u0r4tbgkbj1fko.apps.googleusercontent.com";
-                    options.ClientSecret = "wdfPY6t8H8cecgjlxud__4Gh";
-                });
-        }
-
-        public void Configure(IApplicationBuilder app)
-        {
-            if (Environment.IsDevelopment())
-            {
-                app.UseDeveloperExceptionPage();
-                app.UseDatabaseErrorPage();
-            }
-            else
-            {
-                app.UseExceptionHandler("/Home/Error");
-            }
-
-            app.UseStaticFiles();
-            app.UseIdentityServer();
-            app.UseMvcWithDefaultRoute();
-        }
-
-        private void InitializeDatabase(IApplicationBuilder app)
-        {
-            using (var serviceScope = app.ApplicationServices.GetService<IServiceScopeFactory>().CreateScope())
-            {
-                serviceScope.ServiceProvider.GetRequiredService<PersistedGrantDbContext>().Database.Migrate();
-
-                var context = serviceScope.ServiceProvider.GetRequiredService<ConfigurationDbContext>();
-                context.Database.Migrate();
-            }
-        }
+      Configuration = configuration;
+      Environment = environment;
     }
+
+    public void ConfigureServices(IServiceCollection services)
+    {
+      // Store connection string as a var
+      var connectionString = Configuration.GetConnectionString("DefaultConnection");
+
+      // Store assembly for migrations
+      var migrationsAssembly = typeof(Startup).GetTypeInfo().Assembly.GetName().Name;
+      // Replace DbContext database from SqLite in template to PostgreSQL 
+      services.AddDbContext<ApplicationDbContext>(options =>
+          options.UseNpgsql(connectionString));
+
+      services.AddIdentity<ApplicationUser, IdentityRole>()
+          .AddEntityFrameworkStores<ApplicationDbContext>()
+          .AddDefaultTokenProviders();
+
+      services.AddMvc();
+
+      services.Configure<IISOptions>(iis =>
+      {
+        iis.AuthenticationDisplayName = "Windows";
+        iis.AutomaticAuthentication = false;
+      });
+
+      var builder = services.AddIdentityServer()
+
+          // Use our Postgres Database for storing configuration data
+          .AddConfigurationStore(configDb =>
+          {
+            configDb.ConfigureDbContext = db => db.UseNpgsql(connectionString,
+                  sql => sql.MigrationsAssembly(migrationsAssembly));
+          })
+          // Use our Postgres Database for storing operational data
+          .AddOperationalStore(operationalDb =>
+          {
+            operationalDb.ConfigureDbContext = db => db.UseNpgsql(connectionString,
+                  sql => sql.MigrationsAssembly(migrationsAssembly));
+          })
+          .AddAspNetIdentity<ApplicationUser>();
+
+      if (Environment.IsDevelopment())
+      {
+        builder.AddDeveloperSigningCredential();
+      }
+      else
+      {
+        throw new Exception("need to configure key material");
+      }
+
+      services.AddAuthentication()
+          .AddGoogle(options =>
+          {
+            options.ClientId = "708996912208-9m4dkjb5hscn7cjrn5u0r4tbgkbj1fko.apps.googleusercontent.com";
+            options.ClientSecret = "wdfPY6t8H8cecgjlxud__4Gh";
+          });
+    }
+
+    public void Configure(IApplicationBuilder app)
+    {
+      InitializeDatabase(app);
+
+      if (Environment.IsDevelopment())
+      {
+        app.UseDeveloperExceptionPage();
+        app.UseDatabaseErrorPage();
+      }
+      else
+      {
+        app.UseExceptionHandler("/Home/Error");
+      }
+
+      app.UseStaticFiles();
+      app.UseIdentityServer();
+      app.UseMvcWithDefaultRoute();
+    }
+
+    private void InitializeDatabase(IApplicationBuilder app)
+    {
+      //Using a services Scope
+      using (var serviceScope = app.ApplicationServices.GetService<IServiceScopeFactory>().CreateScope())
+      {
+        // Create PersistedGrant Database (we're using a single db here)
+        // if it doesn't exist, and run outstanding migrations
+        var persistedGrantDbContext = serviceScope.ServiceProvider
+            .GetRequiredService<PersistedGrantDbContext>();
+        persistedGrantDbContext.Database.Migrate();
+
+        // Create IS4 Configuration Database (we're using a single db here)
+        // if it doesn't exist, and run outstanding migrations
+        var configDbContext = serviceScope.ServiceProvider
+            .GetRequiredService<ConfigurationDbContext>();
+        configDbContext.Database.Migrate();
+
+        // Generating the records corresponding to the clients, IdentityResources and
+        // API Resources that are defined in our Config class
+        if (!configDbContext.Clients.Any())
+        {
+          foreach (var client in Config.GetClients())
+          {
+            configDbContext.Clients.Add(client.ToEntity());
+          }
+          configDbContext.SaveChanges();
+        }
+
+        if (!configDbContext.IdentityResources.Any())
+        {
+          foreach (var res in Config.GetIdentityResources())
+          {
+            configDbContext.IdentityResources.Add(res.ToEntity());
+          }
+          configDbContext.SaveChanges();
+        }
+
+        if (!configDbContext.ApiResources.Any())
+        {
+          foreach (var api in Config.GetApis())
+          {
+            configDbContext.ApiResources.Add(api.ToEntity());
+          }
+          configDbContext.SaveChanges();
+        }
+      }
+    }
+  }
 }
