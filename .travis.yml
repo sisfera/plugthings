@@ -2,6 +2,3 @@ language: csharp
 mono: none
 dotnet: 2.1.401
 dist: trusty
-script:
-  - dotnet restore
-  - dotnet build
